@@ -19,3 +19,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_ENABLE_COMMENTS: "false"
+
+  semgrep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container:
+      image: semgrep/semgrep
+    steps:
+      - name: Checkout do codigo
+        uses: actions/checkout@v6
+      - name: Analisar codigo com Semgrep
+        run: semgrep ci --config auto
+        env:
+          SEMGREP_RULES: p/default
