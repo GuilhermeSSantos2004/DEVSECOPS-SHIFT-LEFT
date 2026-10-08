@@ -1,3 +1,4 @@
 relatorios/*
 !relatorios/README.md
 __pycache__/
+.env

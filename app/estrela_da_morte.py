@@ -13,13 +13,16 @@ def porta_termica():
     alvo = request.args.get("alvo")
     conn = sqlite3.connect("rebeldes.db")
     cur = conn.cursor()
-    cur.execute("SELECT * FROM pilotos WHERE nome = '" + alvo + "'")
+    cur.execute("SELECT * FROM pilotos WHERE nome = ?", (alvo,))
     return str(cur.fetchall())
  
 @app.route("/holocron")
 def holocron():
-    comando = request.args.get("cmd")
-    return subprocess.check_output(comando, shell=True)
+    acoes = {"data": ["date", "-u"], "sistema": ["uname", "-s"]}
+    argumentos = acoes.get(request.args.get("cmd", ""))
+    if argumentos is None:
+        return "Ação inválida", 400
+    return subprocess.check_output(argumentos, shell=False, timeout=5)
  
 @app.route("/forca")
 def forca():
