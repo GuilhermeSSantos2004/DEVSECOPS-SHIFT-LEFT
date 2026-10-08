@@ -1,0 +1,89 @@
+name: Experimentos da Guilda
+on:
+  push:
+    paths:
+      - .github/workflows/experimentos.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  laboratorio:
+    name: Historico, excecao e hook
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+      - name: Executar laboratorio isolado com iscas sem validade
+        shell: bash
+        run: |
+          set -e
+          curl --fail --location --silent --show-error https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz -o "$RUNNER_TEMP/gitleaks.tar.gz"
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+          export PATH="$RUNNER_TEMP:$PATH"
+          export LAB_EVIDENCE="$GITHUB_WORKSPACE/relatorios-lab2"
+          mkdir -p "$LAB_EVIDENCE"
+          git clone --no-hardlinks . "$RUNNER_TEMP/lab2"
+          cd "$RUNNER_TEMP/lab2"
+          git config user.name 'Guilda Lab'
+          git config user.email 'guilda@example.invalid'
+          python3 - <<'PY'
+          import uuid
+          from pathlib import Path
+          # Isca aleatoria apenas para a regex da guilda; nenhum provedor a emitiu.
+          Path('.env').write_text('HOLOCRON_TOKEN=holocron_test_'+uuid.uuid4().hex[:24]+'\n')
+          PY
+          git add -f .env
+          git commit -m 'test: isca Holocron apenas no clone efemero'
+          git rev-parse HEAD > "$LAB_EVIDENCE/commit-isca.txt"
+          git rm --cached .env
+          git commit -m 'test: retira isca do indice e conserva arquivo local'
+          set +e
+          gitleaks git . --config .gitleaks.toml --log-opts=--all --redact --report-path "$LAB_EVIDENCE/git.json"
+          echo "git_exit=$?" > "$LAB_EVIDENCE/exits.txt"
+          gitleaks dir . --config .gitleaks.toml --redact --report-path "$LAB_EVIDENCE/dir-com-env.json"
+          echo "dir_com_env_exit=$?" >> "$LAB_EVIDENCE/exits.txt"
+          rm .env
+          gitleaks dir . --config .gitleaks.toml --redact --report-path "$LAB_EVIDENCE/dir-sem-env.json"
+          echo "dir_sem_env_exit=$?" >> "$LAB_EVIDENCE/exits.txt"
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          base=Path(os.environ['LAB_EVIDENCE'])
+          rows=json.loads((base/'git.json').read_text())
+          row=next(r for r in rows if r['RuleID']=='holocron-token')
+          Path('.gitleaksignore').write_text(row['Fingerprint']+'\n')
+          (base/'fingerprint-ignorado.txt').write_text(row['Fingerprint']+'\n')
+          PY
+          gitleaks git . --config .gitleaks.toml --log-opts=--all --redact --report-path "$LAB_EVIDENCE/git-com-ignore.json"
+          echo "git_ignore_exit=$?" >> "$LAB_EVIDENCE/exits.txt"
+          printf '#!/bin/sh\ngitleaks git --pre-commit --staged --config .gitleaks.toml --redact\n' > .git/hooks/pre-commit
+          chmod +x .git/hooks/pre-commit
+          python3 - <<'PY'
+          import uuid
+          from pathlib import Path
+          Path('iscas.txt').write_text('HOLOCRON_TOKEN=holocron_test_'+uuid.uuid4().hex[:24]+'\n')
+          PY
+          git add iscas.txt
+          git commit -m 'test: tentativa que deve ser bloqueada' > "$LAB_EVIDENCE/hook.txt" 2>&1
+          hook_exit=$?
+          echo "hook_commit_exit=$hook_exit" >> "$LAB_EVIDENCE/exits.txt"
+          cat "$LAB_EVIDENCE/hook.txt"
+          cat "$LAB_EVIDENCE/exits.txt"
+          python3 - <<'PY'
+          import json,os,platform,subprocess
+          from pathlib import Path
+          base=Path(os.environ['LAB_EVIDENCE'])
+          result={'sistema':platform.platform(),'python':platform.python_version(),'git':subprocess.check_output(['git','--version'],text=True).strip(),'gitleaks':subprocess.check_output(['gitleaks','version'],text=True).strip()}
+          for name in ['git','dir-com-env','dir-sem-env','git-com-ignore']:
+              rows=json.loads((base/(name+'.json')).read_text())
+              result[name]={'total':len(rows),'findings':[{'RuleID':r['RuleID'],'File':r['File'],'StartLine':r['StartLine'],'Commit':r['Commit'],'Fingerprint':r['Fingerprint']} for r in rows]}
+          (base/'resumo.json').write_text(json.dumps(result,indent=2))
+          print('RESUMO_LAB2_INICIO\n'+json.dumps(result,indent=2)+'\nRESUMO_LAB2_FIM')
+          PY
+          test "$hook_exit" -ne 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evidencia-lab2
+          path: relatorios-lab2/

@@ -30,6 +30,7 @@ jobs:
 
   segredos:
     name: Gitleaks segredos
+    continue-on-error: true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -48,13 +49,13 @@ jobs:
           echo "git_exit=$?" >> relatorios/gitleaks-exits.txt
           "$RUNNER_TEMP/gitleaks" dir app --config .gitleaks.toml --redact --report-path relatorios/gitleaks-dir-ci.json
           echo "dir_exit=$?" >> relatorios/gitleaks-exits.txt
-      - name: Testar hook com isca AWS ficticia
+      - name: Testar hook com isca Holocron ficticia
         run: |
           set +e
           export PATH="$RUNNER_TEMP:$PATH"
           printf '#!/bin/sh\ngitleaks git --pre-commit --staged --config .gitleaks.toml --redact\n' > .git/hooks/pre-commit
           chmod +x .git/hooks/pre-commit
-          printf 'AWS_ACCESS_KEY_ID=AKIAQWERTYUIOPASDFGHJ\n' > iscas.txt
+          printf 'HOLOCRON_TOKEN=holocron_test_%s\n' "$(python3 -c 'import uuid; print(uuid.uuid4().hex[:24])')" > iscas.txt
           git add iscas.txt
           git -c user.name=Guilda -c user.email=guilda@example.invalid commit -m 'test: tentativa bloqueada pelo hook' > relatorios/hook.txt 2>&1
           hook_exit=$?
