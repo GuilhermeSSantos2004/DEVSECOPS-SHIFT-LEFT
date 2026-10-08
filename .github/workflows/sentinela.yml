@@ -1,0 +1,80 @@
+name: Sentinela da Guilda
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sast:
+    name: Semgrep SAST
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep:1.177.0
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - name: Versao e varredura
+        run: |
+          mkdir -p relatorios
+          semgrep --version | tee relatorios/semgrep-version.txt
+          semgrep scan --config auto --config .semgrep/regras/ --error --json --output relatorios/semgrep-ci.json app
+      - name: Guardar evidencia Semgrep
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidencia-semgrep
+          path: relatorios/
+
+  segredos:
+    name: Gitleaks segredos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+      - name: Instalar Gitleaks fixado
+        run: |
+          mkdir -p relatorios
+          curl --fail --location --silent --show-error https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz -o "$RUNNER_TEMP/gitleaks.tar.gz"
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" version | tee relatorios/gitleaks-version.txt
+      - name: Comparar historico e diretorio
+        run: |
+          set +e
+          "$RUNNER_TEMP/gitleaks" git . --config .gitleaks.toml --log-opts=--all --redact --report-path relatorios/gitleaks-git-ci.json
+          echo "git_exit=$?" >> relatorios/gitleaks-exits.txt
+          "$RUNNER_TEMP/gitleaks" dir app --config .gitleaks.toml --redact --report-path relatorios/gitleaks-dir-ci.json
+          echo "dir_exit=$?" >> relatorios/gitleaks-exits.txt
+      - name: Testar hook com isca AWS ficticia
+        run: |
+          set +e
+          export PATH="$RUNNER_TEMP:$PATH"
+          printf '#!/bin/sh\ngitleaks git --pre-commit --staged --config .gitleaks.toml --redact\n' > .git/hooks/pre-commit
+          chmod +x .git/hooks/pre-commit
+          printf 'AWS_ACCESS_KEY_ID=AKIAQWERTYUIOPASDFGHJ\n' > iscas.txt
+          git add iscas.txt
+          git -c user.name=Guilda -c user.email=guilda@example.invalid commit -m 'test: tentativa bloqueada pelo hook' > relatorios/hook.txt 2>&1
+          hook_exit=$?
+          echo "hook_commit_exit=$hook_exit" >> relatorios/gitleaks-exits.txt
+          cat relatorios/hook.txt
+          git reset -- iscas.txt
+          rm -f iscas.txt .git/hooks/pre-commit
+          if [ "$hook_exit" -eq 0 ]; then exit 2; fi
+      - name: Barreira Gitleaks
+        run: |
+          "$RUNNER_TEMP/gitleaks" git . --config .gitleaks.toml --log-opts=--all --redact --report-path relatorios/gitleaks-ci.json --exit-code 1
+      - name: Guardar evidencia Gitleaks
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidencia-gitleaks
+          path: relatorios/
+      - name: Ferramenta para reproduzir localmente
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-linux-8.24.3
+          path: ${{ runner.temp }}/gitleaks
